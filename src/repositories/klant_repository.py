@@ -37,6 +37,15 @@ class KlantRepository:
             return self._map_to_klant(result[0])
         return None
     
+    def get_by_klantnummer(self, klantnummer):
+        """Haalt klant op via klantnummer"""
+        query = "SELECT * FROM klanten WHERE klantnummer = %s"
+        result = self.db.execute_query(query, (klantnummer,))
+        
+        if result:
+            return self._map_to_klant(result[0])
+        return None
+    
     def search(self, search_term):
         """Zoekt klanten op naam, email of klantnummer"""
         search_term = f"%{search_term}%"
