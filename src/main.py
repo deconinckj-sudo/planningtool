@@ -5,7 +5,8 @@ Main Application - Thiry Planning Tool
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
-    QDialog, QFormLayout, QMessageBox, QComboBox, QDateTimeEdit, QTextEdit, QHeaderView
+    QDialog, QFormLayout, QMessageBox, QComboBox, QDateTimeEdit, QTextEdit, QHeaderView,
+    QFileDialog, QProgressDialog
 )
 from PySide6.QtCore import Qt, QDateTime, QDate
 from PySide6.QtGui import QIcon, QFont
@@ -21,6 +22,7 @@ from src.repositories.klant_repository import KlantRepository
 from src.repositories.afspraak_repository import AfspraakRepository
 from src.models.klant import Klant
 from src.models.afspraak import Afspraak
+from src.utils.import_manager import ImportManager
 
 class KlantDialog(QDialog):
     """Dialog voor klant toevoegen/bewerken"""
@@ -189,11 +191,14 @@ class MainWindow(QMainWindow):
         delete_btn.clicked.connect(self.delete_klant)
         refresh_btn = QPushButton("🔄 Vernieuwen")
         refresh_btn.clicked.connect(self.load_klanten)
+        import_btn = QPushButton("📥 Importeren uit Excel")
+        import_btn.clicked.connect(self.import_klanten)
         
         button_layout.addWidget(new_btn)
         button_layout.addWidget(edit_btn)
         button_layout.addWidget(delete_btn)
         button_layout.addWidget(refresh_btn)
+        button_layout.addWidget(import_btn)
         button_layout.addStretch()
         layout.addLayout(button_layout)
         
@@ -289,6 +294,82 @@ class MainWindow(QMainWindow):
             if self.klant_repo.delete(klant_id):
                 QMessageBox.information(self, "Succes", "Klant verwijderd!")
                 self.load_klanten()
+    
+    def import_klanten(self):
+        """Importeert klanten uit CSV/Excel bestand"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Kies Excel of CSV bestand",
+            "",
+            "Excel Files (*.xlsx *.xls);;CSV Files (*.csv);;Alle Bestanden (*.*)"
+        )
+        
+        if not file_path:
+            return
+        
+        # Progress dialog
+        progress = QProgressDialog(
+            "Klanten worden ingeladen...",
+            "Annuleren",
+            0, 100,
+            self
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        
+        try:
+            # Lees bestand
+            if file_path.endswith('.csv'):
+                klanten, fouten = ImportManager.import_csv(file_path)
+            else:
+                klanten, fouten = ImportManager.import_excel(file_path)
+            
+            progress.setValue(50)
+            
+            if not klanten and fouten:
+                QMessageBox.critical(
+                    self,
+                    "Fout bij importeren",
+                    f"Geen klanten ingeladen.\n\nFouten:\n" + "\n".join(fouten[:5])
+                )
+                progress.close()
+                return
+            
+            # Voeg klanten toe aan database
+            added = 0
+            skipped = 0
+            errors = []
+            
+            for i, klant in enumerate(klanten):
+                progress.setValue(50 + (i / len(klanten)) * 50)
+                
+                # Controleer of klant al bestaat
+                existing = self.klant_repo.get_by_klantnummer(klant.klantnummer)
+                if existing:
+                    skipped += 1
+                    continue
+                
+                if not self.klant_repo.create(klant):
+                    errors.append(f"Fout bij toevoegen: {klant.naam}")
+                else:
+                    added += 1
+            
+            progress.close()
+            
+            # Toon resultaat
+            message = f"✅ {added} klanten succesvol geïmporteerd!"
+            if skipped > 0:
+                message += f"\n⏭️ {skipped} klanten waren al aanwezig (overgeslagen)"
+            if errors:
+                message += f"\n❌ {len(errors)} fouten\n\n" + "\n".join(errors[:5])
+            
+            QMessageBox.information(self, "Import Compleet", message)
+            self.load_klanten()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Fout", f"Fout bij importeren: {str(e)}")
+        finally:
+            progress.close()
 
 def main():
     app = QApplication(sys.argv)
