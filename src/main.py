@@ -125,6 +125,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.klant_repo = KlantRepository()
         self.afspraak_repo = AfspraakRepository()
+        self.current_klanten = []  # Huidy klanten in geheugen
+        self.sort_column = None  # Huide sort kolom
+        self.sort_ascending = True  # Huide sort richting
         self.init_ui()
         self.load_klanten()
     
@@ -207,6 +210,10 @@ class MainWindow(QMainWindow):
         self.klanten_table.setColumnCount(6)
         self.klanten_table.setHorizontalHeaderLabels(["ID", "Klantnummer", "Naam", "Telefoon", "Email", "Gemeente"])
         self.klanten_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        
+        # Sorteer functionaliteit inschakelen
+        self.klanten_table.horizontalHeader().sectionClicked.connect(self.on_column_header_clicked)
+        
         layout.addWidget(self.klanten_table)
         
         widget.setLayout(layout)
@@ -224,9 +231,43 @@ class MainWindow(QMainWindow):
     
     def load_klanten(self):
         """Laadt alle klanten in tabel"""
-        klanten = self.klant_repo.get_all()
-        self.display_klanten(klanten)
-        self.klanten_count_label.setText(f"Klanten: {len(klanten)}")
+        self.current_klanten = self.klant_repo.get_all()
+        self.sort_column = None
+        self.sort_ascending = True
+        self.display_klanten(self.current_klanten)
+        self.klanten_count_label.setText(f"Klanten: {len(self.current_klanten)}")
+    
+    def on_column_header_clicked(self, column):
+        """Sorteert tabel als kolom header geklikt wordt"""
+        # Bepaal sort richting
+        if self.sort_column == column:
+            # Als dezelfde kolom: wissel richting
+            self.sort_ascending = not self.sort_ascending
+        else:
+            # Nieuwe kolom: begin met oplopend
+            self.sort_column = column
+            self.sort_ascending = True
+        
+        # Sorteer klanten
+        self.sort_klanten_by_column(column, self.sort_ascending)
+    
+    def sort_klanten_by_column(self, column, ascending):
+        """Sorteert klanten lijst based op kolom"""
+        column_map = {
+            0: lambda k: k.id,
+            1: lambda k: k.klantnummer.lower(),
+            2: lambda k: k.naam.lower(),
+            3: lambda k: k.telefoon or "",
+            4: lambda k: k.email or "",
+            5: lambda k: k.gemeente or ""
+        }
+        
+        if column in column_map:
+            self.current_klanten.sort(
+                key=column_map[column],
+                reverse=not ascending
+            )
+            self.display_klanten(self.current_klanten)
     
     def display_klanten(self, klanten):
         """Toont klanten in tabel"""
@@ -244,8 +285,10 @@ class MainWindow(QMainWindow):
         """Zoekt klanten"""
         search_term = self.search_input.text()
         if search_term:
-            klanten = self.klant_repo.search(search_term)
-            self.display_klanten(klanten)
+            self.current_klanten = self.klant_repo.search(search_term)
+            self.sort_column = None  # Reset sorteer
+            self.sort_ascending = True
+            self.display_klanten(self.current_klanten)
         else:
             self.load_klanten()
     
