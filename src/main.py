@@ -6,9 +6,9 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QDialog, QFormLayout, QMessageBox, QComboBox, QDateTimeEdit, QTextEdit, QHeaderView,
-    QFileDialog, QProgressDialog
+    QFileDialog, QProgressDialog, QCheckBox, QScrollArea
 )
-from PySide6.QtCore import Qt, QDateTime, QDate
+from PySide6.QtCore import Qt, QDateTime, QDate, QSize
 from PySide6.QtGui import QIcon, QFont
 import sys
 import os
@@ -118,6 +118,55 @@ class KlantDialog(QDialog):
         self.klant.opmerkingen = self.opmerkingen_input.toPlainText()
         return self.klant
 
+class ColumnPickerDialog(QDialog):
+    """Dialog om kolommen te kiezen"""
+    
+    def __init__(self, available_columns, visible_columns, parent=None):
+        super().__init__(parent)
+        self.available_columns = available_columns
+        self.visible_columns = visible_columns
+        self.checkboxes = {}
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle("Kolommen Selecteren")
+        self.setGeometry(100, 100, 300, 400)
+        
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Selecteer welke kolommen zichtbaar zijn:"))
+        
+        # Scrollable area met checkboxes
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        container_layout = QVBoxLayout()
+        
+        for col in self.available_columns:
+            checkbox = QCheckBox(col)
+            checkbox.setChecked(col in self.visible_columns)
+            self.checkboxes[col] = checkbox
+            container_layout.addWidget(checkbox)
+        
+        container.setLayout(container_layout)
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+        
+        # Knoppen
+        button_layout = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Annuleren")
+        cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(ok_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+    
+    def get_visible_columns(self):
+        """Geeft geselecteerde kolommen"""
+        return [col for col, checkbox in self.checkboxes.items() if checkbox.isChecked()]
+
 class MainWindow(QMainWindow):
     """Hoofd applicatievenster"""
     
@@ -125,9 +174,14 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.klant_repo = KlantRepository()
         self.afspraak_repo = AfspraakRepository()
-        self.current_klanten = []  # Huidy klanten in geheugen
-        self.sort_column = None  # Huide sort kolom
-        self.sort_ascending = True  # Huide sort richting
+        self.current_klanten = []
+        self.sort_column = None
+        self.sort_ascending = True
+        
+        # Beschikbare en zichtbare kolommen
+        self.available_columns = ["ID", "Klantnummer", "Naam", "Adres", "Telefoon", "Email", "Gemeente"]
+        self.visible_columns = ["ID", "Klantnummer", "Naam", "Adres", "Telefoon", "Email", "Gemeente"]
+        
         self.init_ui()
         self.load_klanten()
     
@@ -196,20 +250,21 @@ class MainWindow(QMainWindow):
         refresh_btn.clicked.connect(self.load_klanten)
         import_btn = QPushButton("📥 Importeren uit Excel")
         import_btn.clicked.connect(self.import_klanten)
+        columns_btn = QPushButton("⚙️ Kolommen")
+        columns_btn.clicked.connect(self.show_column_picker)
         
         button_layout.addWidget(new_btn)
         button_layout.addWidget(edit_btn)
         button_layout.addWidget(delete_btn)
         button_layout.addWidget(refresh_btn)
         button_layout.addWidget(import_btn)
+        button_layout.addWidget(columns_btn)
         button_layout.addStretch()
         layout.addLayout(button_layout)
         
         # Tabel
         self.klanten_table = QTableWidget()
-        self.klanten_table.setColumnCount(6)
-        self.klanten_table.setHorizontalHeaderLabels(["ID", "Klantnummer", "Naam", "Telefoon", "Email", "Gemeente"])
-        self.klanten_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.update_table_columns()
         
         # Sorteer functionaliteit inschakelen
         self.klanten_table.horizontalHeader().sectionClicked.connect(self.on_column_header_clicked)
@@ -218,6 +273,26 @@ class MainWindow(QMainWindow):
         
         widget.setLayout(layout)
         return widget
+    
+    def update_table_columns(self):
+        """Update tabel kolommen op basis van visible_columns"""
+        self.klanten_table.setColumnCount(len(self.visible_columns))
+        self.klanten_table.setHorizontalHeaderLabels(self.visible_columns)
+        
+        # Zet kolom breedtes op basis van content
+        for i in range(len(self.visible_columns)):
+            if self.visible_columns[i] in ["ID", "Klantnummer"]:
+                self.klanten_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
+            else:
+                self.klanten_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.Stretch)
+    
+    def show_column_picker(self):
+        """Toont dialog om kolommen te kiezen"""
+        dialog = ColumnPickerDialog(self.available_columns, self.visible_columns, self)
+        if dialog.exec():
+            self.visible_columns = dialog.get_visible_columns()
+            self.update_table_columns()
+            self.display_klanten(self.current_klanten)
     
     def create_afspraken_tab(self):
         """Maakt afspraken tabblad"""
@@ -239,32 +314,31 @@ class MainWindow(QMainWindow):
     
     def on_column_header_clicked(self, column):
         """Sorteert tabel als kolom header geklikt wordt"""
-        # Bepaal sort richting
         if self.sort_column == column:
-            # Als dezelfde kolom: wissel richting
             self.sort_ascending = not self.sort_ascending
         else:
-            # Nieuwe kolom: begin met oplopend
             self.sort_column = column
             self.sort_ascending = True
         
-        # Sorteer klanten
         self.sort_klanten_by_column(column, self.sort_ascending)
     
     def sort_klanten_by_column(self, column, ascending):
         """Sorteert klanten lijst based op kolom"""
+        col_name = self.visible_columns[column]
+        
         column_map = {
-            0: lambda k: k.id,
-            1: lambda k: k.klantnummer.lower(),
-            2: lambda k: k.naam.lower(),
-            3: lambda k: k.telefoon or "",
-            4: lambda k: k.email or "",
-            5: lambda k: k.gemeente or ""
+            "ID": lambda k: int(k.id) if k.id else 0,
+            "Klantnummer": lambda k: int(k.klantnummer) if k.klantnummer.isdigit() else k.klantnummer.lower(),
+            "Naam": lambda k: k.naam.lower(),
+            "Adres": lambda k: f"{k.straat or ''} {k.huisnummer or ''}".lower(),
+            "Telefoon": lambda k: k.telefoon or "",
+            "Email": lambda k: k.email or "",
+            "Gemeente": lambda k: k.gemeente or ""
         }
         
-        if column in column_map:
+        if col_name in column_map:
             self.current_klanten.sort(
-                key=column_map[column],
+                key=column_map[col_name],
                 reverse=not ascending
             )
             self.display_klanten(self.current_klanten)
@@ -274,19 +348,29 @@ class MainWindow(QMainWindow):
         self.klanten_table.setRowCount(len(klanten))
         
         for row, klant in enumerate(klanten):
-            self.klanten_table.setItem(row, 0, QTableWidgetItem(str(klant.id)))
-            self.klanten_table.setItem(row, 1, QTableWidgetItem(klant.klantnummer))
-            self.klanten_table.setItem(row, 2, QTableWidgetItem(klant.naam))
-            self.klanten_table.setItem(row, 3, QTableWidgetItem(klant.telefoon or ""))
-            self.klanten_table.setItem(row, 4, QTableWidgetItem(klant.email or ""))
-            self.klanten_table.setItem(row, 5, QTableWidgetItem(klant.gemeente or ""))
+            for col_idx, col_name in enumerate(self.visible_columns):
+                if col_name == "ID":
+                    self.klanten_table.setItem(row, col_idx, QTableWidgetItem(str(klant.id)))
+                elif col_name == "Klantnummer":
+                    self.klanten_table.setItem(row, col_idx, QTableWidgetItem(klant.klantnummer))
+                elif col_name == "Naam":
+                    self.klanten_table.setItem(row, col_idx, QTableWidgetItem(klant.naam))
+                elif col_name == "Adres":
+                    adres = f"{klant.straat or ''} {klant.huisnummer or ''}".strip()
+                    self.klanten_table.setItem(row, col_idx, QTableWidgetItem(adres))
+                elif col_name == "Telefoon":
+                    self.klanten_table.setItem(row, col_idx, QTableWidgetItem(klant.telefoon or ""))
+                elif col_name == "Email":
+                    self.klanten_table.setItem(row, col_idx, QTableWidgetItem(klant.email or ""))
+                elif col_name == "Gemeente":
+                    self.klanten_table.setItem(row, col_idx, QTableWidgetItem(klant.gemeente or ""))
     
     def search_klanten(self):
         """Zoekt klanten"""
         search_term = self.search_input.text()
         if search_term:
             self.current_klanten = self.klant_repo.search(search_term)
-            self.sort_column = None  # Reset sorteer
+            self.sort_column = None
             self.sort_ascending = True
             self.display_klanten(self.current_klanten)
         else:
@@ -350,7 +434,6 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
         
-        # Progress dialog
         progress = QProgressDialog(
             "Klanten worden ingeladen...",
             "Annuleren",
@@ -361,7 +444,6 @@ class MainWindow(QMainWindow):
         progress.show()
         
         try:
-            # Lees bestand
             if file_path.endswith('.csv'):
                 klanten, fouten = ImportManager.import_csv(file_path)
             else:
@@ -378,7 +460,6 @@ class MainWindow(QMainWindow):
                 progress.close()
                 return
             
-            # Voeg klanten toe aan database
             added = 0
             skipped = 0
             errors = []
@@ -386,7 +467,6 @@ class MainWindow(QMainWindow):
             for i, klant in enumerate(klanten):
                 progress.setValue(50 + (i / len(klanten)) * 50)
                 
-                # Controleer of klant al bestaat
                 existing = self.klant_repo.get_by_klantnummer(klant.klantnummer)
                 if existing:
                     skipped += 1
@@ -399,7 +479,6 @@ class MainWindow(QMainWindow):
             
             progress.close()
             
-            # Toon resultaat
             message = f"✅ {added} klanten succesvol geïmporteerd!"
             if skipped > 0:
                 message += f"\n⏭️ {skipped} klanten waren al aanwezig (overgeslagen)"
@@ -417,7 +496,6 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     
-    # Verbind met database
     db = DatabaseConnection()
     if not db.connect():
         QMessageBox.critical(None, "Fout", "Kan niet verbinden met database!\n\nVoer eerst setup_db.py uit.")
