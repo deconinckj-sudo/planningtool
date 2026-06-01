@@ -34,6 +34,8 @@ class DatabaseConnection:
                 user=DB_CONFIG['user'],
                 password=DB_CONFIG['password']
             )
+            # Enable autocommit voor betere connection handling
+            self._connection.autocommit = False
             print("✅ Database verbonden!")
             return True
         except psycopg2.OperationalError as e:
@@ -48,6 +50,7 @@ class DatabaseConnection:
     
     def execute_query(self, query, params=None):
         """Voert SELECT query uit en geeft resultaten"""
+        cursor = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -57,8 +60,11 @@ class DatabaseConnection:
             else:
                 cursor.execute(query)
             
-            return cursor.fetchall()
+            results = cursor.fetchall()
+            conn.commit()  # Commit ook voor queries (IMPORTANT!)
+            return results
         except Exception as e:
+            self.get_connection().rollback()
             print(f"❌ Query fout: {e}")
             return None
         finally:
@@ -67,6 +73,7 @@ class DatabaseConnection:
     
     def execute_update(self, query, params=None):
         """Voert INSERT/UPDATE/DELETE uit"""
+        cursor = None
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -76,9 +83,12 @@ class DatabaseConnection:
             else:
                 cursor.execute(query)
             
+            rows_affected = cursor.rowcount
             conn.commit()
+            print(f"✅ {rows_affected} rij(en) gewijzigd")
             return True
         except Exception as e:
+            conn = self.get_connection()
             conn.rollback()
             print(f"❌ Update fout: {e}")
             return False
@@ -89,5 +99,8 @@ class DatabaseConnection:
     def close(self):
         """Sluit database verbinding"""
         if self._connection:
-            self._connection.close()
-            print("Database verbinding gesloten")
+            try:
+                self._connection.close()
+                print("✅ Database verbinding gesloten")
+            except Exception as e:
+                print(f"❌ Fout bij sluiten verbinding: {e}")
